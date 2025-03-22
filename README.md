@@ -23,7 +23,6 @@
 
 - **Operating System:** Windows, Linux, or macOS
 - **Hardware:** Standard modern PC specifications
-- **Dependencies:** [List any runtime requirements if applicable]
 
 ## Contributing
 
