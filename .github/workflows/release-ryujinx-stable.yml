@@ -1,0 +1,104 @@
+name: Migrate Stable Releases with Dynamic Changelog
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate-stable-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (Destination)
+        uses: actions/checkout@v4
+
+      - name: Debug Secrets
+        run: |
+          if [[ -z "${{ secrets.RELEASE_TOKEN }}" ]]; then
+            echo "❌ RELEASE_TOKEN is missing!"
+            exit 1
+          else
+            echo "✅ RELEASE_TOKEN is set."
+          fi
+
+      - name: Install GitHub CLI
+        run: |
+          sudo apt update
+          sudo apt install -y gh
+
+      - name: Authenticate GitHub CLI
+        run: echo "${{ secrets.RELEASE_TOKEN }}" | gh auth login --with-token
+
+      - name: Check GitHub API Rate Limits
+        run: gh api rate_limit
+
+      - name: Clone Source Repository for Changelog Generation
+        run: |
+          SOURCE_REPO="Ryubing/Stable-Releases"
+          git clone https://github.com/$SOURCE_REPO.git source-stable
+          cd source-stable
+          git fetch --tags
+        working-directory: ${{ github.workspace }}
+
+      - name: Fetch and Migrate Stable Releases with Dynamic Changelog
+        run: |
+          set -e
+          SOURCE_REPO="Ryubing/Stable-Releases"
+          DEST_REPO="ADEMOLA200/Ryujinx-Stable-Builds"
+          TAG_PREFIX="stable-"
+          SOURCE_TAGS=$(gh api --paginate "/repos/$SOURCE_REPO/releases" --jq '.[].tag_name')
+          if [ -z "$SOURCE_TAGS" ]; then
+            echo "❌ No releases found in source repository!"
+            exit 1
+          fi
+          echo "Found stable releases to process:"
+          echo "$SOURCE_TAGS"
+          for TAG in $SOURCE_TAGS; do
+            NEW_TAG="${TAG_PREFIX}${TAG}"
+            echo "🚀 Processing stable release: $TAG as $NEW_TAG"
+            if gh release view "$NEW_TAG" -R "$DEST_REPO" > /dev/null 2>&1; then
+              echo "⏭️ Release $NEW_TAG already exists. Skipping..."
+              continue
+            fi
+            cd source-stable
+            if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+              CHANGES="Dynamic changelog not available for $TAG."
+            else
+              PREV_TAG=$(git tag --sort=-v:refname | awk "/^$TAG\$/{found=1; next} found{print; exit}")
+              if [ -z "$PREV_TAG" ]; then
+                CHANGES=$(git log "$TAG" --pretty=format:"- %s")
+              else
+                CHANGES=$(git log "$PREV_TAG".."$TAG" --pretty=format:"- %s")
+              fi
+            fi
+            cd ..
+            DESCRIPTION="## Stable Builds:
+
+            These builds are considered stable releases and are recommended for production use.
+
+            | Platform           | Artifact                     |
+            |--------------------|------------------------------|
+            | Windows 64-bit     | Stable Windows Artifact      |
+            | Windows ARM 64-bit | Stable Windows ARM Artifact  |
+            | Linux 64-bit       | Stable Linux Artifact        |
+            | Linux ARM 64-bit   | Stable Linux Artifact        |
+            | macOS              | Stable macOS Artifact        |
+
+            **Dynamic Changelog for $TAG:**
+            $CHANGES
+
+            # [Full Changelog](https://github.com/Ryubing/Ryujinx/compare/${PREV_TAG:-initial}...$TAG)
+            "
+            DESCRIPTION_CLEANED=$(echo "$DESCRIPTION" | sed 's/^ *//g')
+            gh release create "$NEW_TAG" -R "$DEST_REPO" --title "$TAG (Stable)" --notes "$DESCRIPTION_CLEANED"
+            ASSET_URLS=$(gh release view "$TAG" -R "$SOURCE_REPO" --json assets -q '.assets[].url')
+            for URL in $ASSET_URLS; do
+              FILENAME=$(basename "$URL")
+              echo "📥 Downloading $FILENAME..."
+              curl -L -o "$FILENAME" "$URL"
+              echo "📤 Uploading $FILENAME..."
+              gh release upload "$NEW_TAG" -R "$DEST_REPO" "$FILENAME" || echo "⚠️ Failed to upload $FILENAME"
+              rm -f "$FILENAME"
+            done
+            echo "✅ Successfully migrated stable release $TAG as $NEW_TAG!"
+            sleep 1
+          done
+        working-directory: ${{ github.workspace }}
