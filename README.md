@@ -44,7 +44,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Contact
 
-For questions or support, feel free to open an issue or contact me via [email/social media].
+For questions or support, feel free to open an issue or contact me via [odukoyaabdullahi01@gmail.com].
 
 ---
 
